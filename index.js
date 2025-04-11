@@ -1,94 +1,95 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const app = express();
-const bodyParser = require('body-parser');
 const dns = require('dns');
 const url = require('url');
+const bodyParser = require('body-parser');
+const app = express();
 
 // Basic Configuration
-const port = process.env.PORT || 4000;
+const port = process.env.PORT || 3000;
 
-// Middleware
+// URL storage
+let urlDatabase = {};
+let shortUrlCounter = 1;
+
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+
 app.use('/public', express.static(`${process.cwd()}/public`));
 
-// Root route
-app.get('/', (req, res) => {
-    res.sendFile(process.cwd() + '/public/index.html');
+app.get('/', function(req, res) {
+  res.sendFile(process.cwd() + '/views/index.html');
 });
 
-// Array to store URLs
-const URLs = [];
-let id = 0;
+// Your first API endpoint
+app.get('/api/hello', function(req, res) {
+  res.json({ greeting: 'hello API' });
+});
 
-// POST request to shorten URL
-app.post('/api/shorturl', (req, res) => {
-    const { url: _url } = req.body;
-
-    // Check if URL is empty
-    if (!_url) {
-        return res.json({ error: "invalid url" });
+// URL shortener endpoint - creates a short URL
+app.post('/api/shorturl', function(req, res) {
+  const originalUrl = req.body.url;
+  
+  // Check if URL is valid
+  try {
+    const parsedUrl = new URL(originalUrl);
+    
+    // Use only http/https protocols
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      return res.json({ error: 'invalid url' });
     }
-
-    // Validate URL format
-    let parsedUrl;
-    try {
-        parsedUrl = new URL(_url);
-        if (!parsedUrl.protocol.match(/^https?:$/)) {
-            return res.json({ error: "invalid url" });
-        }
-    } catch (err) {
-        return res.json({ error: "invalid url" });
-    }
-
+    
+    // Extract hostname for DNS lookup
     const hostname = parsedUrl.hostname;
-
-    // Validate hostname with DNS lookup
+    
+    // Check if hostname is valid via DNS lookup
     dns.lookup(hostname, (err) => {
-        if (err) {
-            console.log(`DNS lookup failed for ${hostname}: ${err.message}`);
-            return res.json({ error: "invalid url" });
+      if (err) {
+        return res.json({ error: 'invalid url' });
+      }
+      
+      // Check if URL already exists in our database
+      for (const key in urlDatabase) {
+        if (urlDatabase[key] === originalUrl) {
+          return res.json({
+            original_url: originalUrl,
+            short_url: parseInt(key)
+          });
         }
-
-        // Check if URL already exists
-        const linkExists = URLs.find(l => l.original_url === _url);
-        if (linkExists) {
-            return res.json({
-                original_url: linkExists.original_url,
-                short_url: linkExists.short_url
-            });
-        }
-
-        // Increment ID and create new entry
-        id += 1;
-        const urlObject = {
-            original_url: _url,
-            short_url: id // Keep as number for consistency
-        };
-        URLs.push(urlObject);
-
-        return res.json({
-            original_url: _url,
-            short_url: id
-        });
+      }
+      
+      // Add new URL to database
+      const shortUrl = shortUrlCounter++;
+      urlDatabase[shortUrl] = originalUrl;
+      
+      // Return the result
+      res.json({
+        original_url: originalUrl,
+        short_url: shortUrl
+      });
     });
+  } catch (error) {
+    // URL parsing failed
+    return res.json({ error: 'invalid url' });
+  }
 });
 
-// GET request to redirect short URL
-app.get('/api/shorturl/:id', (req, res) => {
-    const { id: _id } = req.params;
-    const shortLink = URLs.find(sl => sl.short_url === parseInt(_id));
-
-    if (shortLink) {
-        return res.redirect(shortLink.original_url);
-    } else {
-        return res.json({ error: "invalid URL" });
-    }
+// Redirect endpoint - redirects to the original URL
+app.get('/api/shorturl/:short_url', function(req, res) {
+  const shortUrl = req.params.short_url;
+  
+  // Check if short URL exists in our database
+  if (urlDatabase[shortUrl]) {
+    // Redirect to the original URL
+    return res.redirect(urlDatabase[shortUrl]);
+  } else {
+    // Short URL not found
+    return res.json({ error: 'No short URL found for the given input' });
+  }
 });
 
-// Start server
-app.listen(port, () => {
-    console.log(`Listening on port ${port}`);
+app.listen(port, function() {
+  console.log(`Listening on port ${port}`);
 });
